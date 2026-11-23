@@ -1,0 +1,37 @@
+<resources>
+    <string name="app_name">ChromaStudio</string>
+    <string name="open_pdf">Open PDF</string>
+    <string name="samples">Samples</string>
+    <string name="page_label_format">Page %1$d / %2$d</string>
+    <string name="previous_page">Previous Page</string>
+    <string name="next_page">Next Page</string>
+    <string name="open_pages_drawer">Open Page Thumbnails</string>
+    <string name="undo">Undo</string>
+    <string name="redo">Redo</string>
+    <string name="palm_lock">Palm Lock</string>
+    <string name="kid_lock">Kid Lock</string>
+    <string name="fullscreen">Fullscreen</string>
+    <string name="exit_fullscreen">Exit Full</string>
+    <string name="save_png">Save</string>
+    <string name="clear_page">Clear</string>
+    <string name="zoom_in">Zoom In</string>
+    <string name="zoom_out">Zoom Out</string>
+    <string name="zoom_fit">Fit Page to Screen</string>
+    <string name="gesture_hint">1 finger to color • 2 fingers to pinch &amp; move</string>
+    <string name="drawer_title">Coloring Book Pages</string>
+    <string name="drawer_subtitle_format">%1$s • %2$d Pages</string>
+    <string name="drawer_subtitle_single">%1$s • 1 Page</string>
+    <string name="colored_badge">Colored</string>
+    <string name="close_drawer">Close Pages Drawer</string>
+    <string name="clear_modal_title">Start This Page Over?</string>
+    <string name="clear_modal_body">This clears all colors on the current page while keeping the black outlines intact.</string>
+    <string name="cancel">Cancel</string>
+    <string name="confirm_clear">Clear Page</string>
+    <string name="custom_color_title">Custom Color</string>
+    <string name="apply_color">Use Color</string>
+    <string name="rendering_page_title">Opening Page %1$d of %2$d…</string>
+    <string name="rendering_page_sub">Preparing crisp outlines</string>
+    <string name="opening_pdf_title">Opening PDF Coloring Book…</string>
+    <string name="sample_book_title">Kids Sample Coloring Book</string>
+    <string name="share_artwork_title">ChromaStudio Artwork</string>
+</resources>

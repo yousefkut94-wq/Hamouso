@@ -1,0 +1,1982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>ChromaStudio — PDF Coloring Book & Digital Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    * {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      height: 100dvh;
+      width: 100vw;
+      margin: 0;
+      padding: 0;
+      background-color: #f4f1ea;
+      color: #1c1917;
+      overflow: hidden;
+      overscroll-behavior: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* Fullscreen state (both native Fullscreen API & CSS fallback for iOS/WebViews) */
+    body.is-fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      height: 100dvh;
+      width: 100vw;
+    }
+
+    /* Hide scrollbars cleanly while keeping smooth touch scrolling */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+    /* Subtle tactile studio desk background */
+    .studio-desk {
+      background-color: #e9e4da;
+      background-image: radial-gradient(#d1cabd 1.25px, transparent 1.25px);
+      background-size: 20px 20px;
+    }
+
+    /* Multi-layer canvas stack container */
+    #canvasStack {
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform-origin: 0 0;
+      background: #ffffff;
+      border-radius: 6px;
+      box-shadow: 0 18px 42px -10px rgba(28, 25, 23, 0.25), 0 4px 12px -2px rgba(28, 25, 23, 0.12);
+      overflow: hidden;
+      will-change: transform;
+    }
+
+    .studio-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      pointer-events: none;
+    }
+
+    /* Custom brush cursor ring on desktop / stylus hover */
+    #brushRing {
+      position: fixed;
+      pointer-events: none;
+      border: 2px solid rgba(28, 25, 23, 0.85);
+      box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.95);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 60;
+      display: none;
+    }
+
+    /* State-driven visibility classes */
+    body.kid-lock .hide-in-kid-lock { display: none !important; }
+    body.is-fullscreen .hide-in-fullscreen { display: none !important; }
+
+    /* =========================================================================
+       RESPONSIVE PORTRAIT / DESKTOP LAYOUT (Default)
+       ========================================================================= */
+    #studioArea {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    #canvasViewport {
+      flex: 1 1 auto;
+      min-height: 0;
+      min-width: 0;
+      position: relative;
+      overflow: hidden;
+      touch-action: none;
+    }
+
+    #bottomDock {
+      flex: 0 0 auto;
+      background: #ffffff;
+      border-top: 1px solid #e7e5e4;
+      padding: 0.45rem 0.6rem max(0.5rem, env(safe-area-inset-bottom));
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+      z-index: 30;
+      box-shadow: 0 -4px 18px rgba(0, 0, 0, 0.04);
+    }
+
+    #leftToolRail {
+      display: flex;
+      flex-direction: column;
+      gap: 0.45rem;
+    }
+
+    #toolList {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 0.35rem;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 0.1rem;
+    }
+
+    #sizeAndActionsRow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+
+    #sizeList {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+      background: #f5f5f4;
+      padding: 0.2rem;
+      border-radius: 0.85rem;
+    }
+
+    #rightColorRail {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 0.45rem;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 0.1rem;
+    }
+
+    /* Narrow mobile portrait header wraps cleanly into 2 non-overlapping rows */
+    @media (max-width: 639px) and (orientation: portrait) {
+      #topBar {
+        flex-wrap: wrap;
+        row-gap: 0.4rem;
+      }
+      #pageNavBox {
+        order: 3;
+        width: 100%;
+        justify-content: center;
+        padding-top: 0.35rem;
+        border-top: 1px solid #f5f5f4;
+      }
+      body.is-fullscreen #pageNavBox {
+        order: 0;
+        width: auto;
+        padding-top: 0;
+        border-top: none;
+      }
+    }
+
+    /* =========================================================================
+       MOBILE & TABLET LANDSCAPE LAYOUT
+       Left Tool Rail (68px) + Full-Height Center Canvas + Right Color Rail (64px)
+       ========================================================================= */
+    @media (orientation: landscape) and (max-height: 820px) {
+      #topBar {
+        min-height: 46px;
+        padding-top: max(0.25rem, env(safe-area-inset-top));
+        padding-bottom: 0.25rem;
+        flex-wrap: nowrap;
+      }
+
+      #pageNavBox {
+        order: 0;
+        width: auto;
+        padding-top: 0;
+        border-top: none;
+      }
+
+      #studioArea {
+        flex-direction: row;
+      }
+
+      /* Flatten #bottomDock so #leftToolRail and #rightColorRail flank #canvasViewport */
+      #bottomDock {
+        display: contents;
+      }
+
+      #leftToolRail {
+        order: 1;
+        width: 68px;
+        height: 100%;
+        flex-shrink: 0;
+        background: #ffffff;
+        border-right: 1px solid #e7e5e4;
+        padding: 0.35rem 0.25rem max(0.35rem, env(safe-area-inset-bottom)) max(0.25rem, env(safe-area-inset-left));
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 0.35rem;
+        z-index: 30;
+      }
+
+      #canvasViewport {
+        order: 2;
+        flex: 1 1 auto;
+        height: 100%;
+        min-width: 0;
+      }
+
+      #rightColorRail {
+        order: 3;
+        width: 64px;
+        height: 100%;
+        flex-shrink: 0;
+        background: #ffffff;
+        border-left: 1px solid #e7e5e4;
+        padding: 0.4rem max(0.25rem, env(safe-area-inset-right)) max(0.4rem, env(safe-area-inset-bottom)) 0.25rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        overflow-x: hidden;
+        overflow-y: auto;
+        gap: 0.4rem;
+        z-index: 30;
+      }
+
+      #toolList {
+        flex: 1 1 auto;
+        flex-direction: column;
+        overflow-x: hidden;
+        overflow-y: auto;
+        width: 100%;
+        gap: 0.3rem;
+      }
+
+      #toolList .tool-btn {
+        width: 100%;
+        min-width: 0;
+        height: 44px;
+        padding: 0.2rem;
+        flex-direction: column;
+        gap: 1px;
+      }
+
+      #sizeAndActionsRow {
+        flex-direction: column;
+        width: 100%;
+        gap: 0.3rem;
+      }
+
+      #sizeList {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        width: 100%;
+        gap: 2px;
+        padding: 0.15rem;
+      }
+
+      #sizeList .size-btn {
+        width: 100%;
+        height: 26px;
+      }
+
+      #landscapeClearWrap {
+        width: 100%;
+      }
+
+      #btnClearPage {
+        width: 100%;
+        height: 32px;
+      }
+
+      #rightColorRail .swatch-btn,
+      #rightColorRail label {
+        width: 38px;
+        height: 38px;
+      }
+    }
+  </style>
+</head>
+<body class="flex flex-col">
+
+  <!-- Desktop / Stylus Hover Brush Preview -->
+  <div id="brushRing"></div>
+
+  <!-- =========================================================================
+       TOP BAR (#topBar)
+       ========================================================================= -->
+  <header id="topBar" class="min-h-[52px] pt-[max(0.35rem,env(safe-area-inset-top))] pb-1.5 px-2.5 sm:px-4 bg-white border-b border-stone-200 flex items-center justify-between gap-2 z-30 shrink-0 shadow-2xs">
+    
+    <!-- Left: Brand + Open PDF + Sample Book -->
+    <div class="flex items-center gap-1.5 sm:gap-2 shrink-0">
+      <div class="hide-in-fullscreen hide-in-kid-lock flex items-center gap-2 pr-1">
+        <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-orange-500 to-rose-500 text-white flex items-center justify-center shadow-xs shrink-0">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+        </div>
+        <span class="hidden lg:inline text-sm font-extrabold tracking-tight text-stone-800">ChromaStudio</span>
+      </div>
+
+      <label for="pdfInput" class="hide-in-fullscreen hide-in-kid-lock cursor-pointer h-9 sm:h-10 px-3 rounded-xl bg-orange-500 hover:bg-orange-600 active:scale-95 text-white text-xs sm:text-sm font-bold transition shadow-2xs inline-flex items-center gap-1.5 shrink-0">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span>Open PDF</span>
+      </label>
+      <input id="pdfInput" type="file" accept="application/pdf,.pdf" class="hidden" />
+
+      <button id="btnSampleBook" class="hide-in-fullscreen hide-in-kid-lock h-9 sm:h-10 px-2.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 active:scale-95 text-xs font-bold transition inline-flex items-center gap-1.5 shrink-0" title="Load Built-in 3-Page Sample Book">
+        <svg class="w-4 h-4 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+        <span class="hidden md:inline">Samples</span>
+      </button>
+    </div>
+
+    <!-- Center: Page Navigation Pill (Opens Thumbnail Drawer on tap) -->
+    <div id="pageNavBox" class="flex items-center">
+      <div class="flex items-center gap-1 bg-stone-100 p-1 rounded-xl border border-stone-200">
+        <button id="btnPrevPage" disabled class="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-white hover:bg-orange-50 disabled:opacity-35 disabled:pointer-events-none text-stone-800 flex items-center justify-center shadow-2xs active:scale-95 transition" title="Previous Page">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+
+        <button id="btnOpenDrawer" class="h-8 sm:h-9 px-2.5 sm:px-3 rounded-lg bg-white hover:bg-orange-50 active:scale-95 text-xs sm:text-sm font-extrabold text-stone-800 flex items-center gap-1.5 shadow-2xs transition" title="Open Page Thumbnails">
+          <svg class="w-4 h-4 text-orange-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          <span class="whitespace-nowrap">
+            Page <span id="pageCurrentText" class="text-orange-600">1</span>
+            <span class="text-stone-400">/</span>
+            <span id="pageTotalText">3</span>
+          </span>
+        </button>
+
+        <button id="btnNextPage" disabled class="w-8 h-8 sm:w-9 sm:h-9 rounded-lg bg-white hover:bg-orange-50 disabled:opacity-35 disabled:pointer-events-none text-stone-800 flex items-center justify-center shadow-2xs active:scale-95 transition" title="Next Page">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Right: Undo / Redo / Palm Lock / Kid Lock / Fullscreen / Save PNG -->
+    <div class="flex items-center gap-1 sm:gap-1.5 shrink-0 ml-auto sm:ml-0">
+      <!-- Undo -->
+      <button id="btnUndo" disabled class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-stone-100 hover:bg-stone-200 disabled:opacity-35 disabled:pointer-events-none text-stone-800 flex items-center justify-center active:scale-95 transition" title="Undo">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+      </button>
+
+      <!-- Redo -->
+      <button id="btnRedo" disabled class="hide-in-fullscreen w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-stone-100 hover:bg-stone-200 disabled:opacity-35 disabled:pointer-events-none text-stone-800 flex items-center justify-center active:scale-95 transition" title="Redo">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+      </button>
+
+      <!-- Palm Lock (Stylus-only mode) -->
+      <button id="btnPalmLock" class="hide-in-fullscreen hide-in-kid-lock h-9 sm:h-10 px-2.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 active:scale-95 transition inline-flex items-center justify-center gap-1 text-xs font-bold" title="Palm Lock: Ignore finger touch while drawing with stylus">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
+        <span class="hidden xl:inline">Palm Lock</span>
+      </button>
+
+      <!-- Kid Lock -->
+      <button id="btnKidLock" class="h-9 sm:h-10 px-2.5 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 active:scale-95 transition inline-flex items-center justify-center gap-1 text-xs font-bold" title="Kid Lock: Hide upload & clear buttons">
+        <svg id="iconKidLock" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
+        <span class="hidden md:inline">Kid Lock</span>
+      </button>
+
+      <!-- Fullscreen Toggle -->
+      <button id="btnFullscreen" class="h-9 sm:h-10 px-2.5 rounded-xl bg-stone-900 hover:bg-stone-800 text-white active:scale-95 transition inline-flex items-center justify-center gap-1.5 text-xs font-bold shadow-2xs" title="Toggle Fullscreen">
+        <svg id="iconFullscreen" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+        <span id="labelFullscreen" class="hidden sm:inline">Fullscreen</span>
+      </button>
+
+      <!-- Export / Save PNG -->
+      <button id="btnExportPng" class="hide-in-fullscreen hide-in-kid-lock h-9 sm:h-10 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-xs sm:text-sm font-bold transition shadow-2xs inline-flex items-center justify-center gap-1.5" title="Save Artwork as PNG">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span class="hidden sm:inline">Save</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- =========================================================================
+       MAIN STUDIO AREA (#studioArea)
+       ========================================================================= -->
+  <div id="studioArea">
+
+    <!-- Interactive Multi-Layer Coloring Viewport (#canvasViewport) -->
+    <main id="canvasViewport" class="studio-desk">
+      
+      <!-- Drag & Drop PDF Overlay -->
+      <div id="dropOverlay" class="hidden absolute inset-3 rounded-3xl border-3 border-dashed border-orange-500 bg-orange-50/95 z-40 flex flex-col items-center justify-center text-center p-6 pointer-events-none">
+        <div class="w-14 h-14 rounded-2xl bg-orange-500 text-white flex items-center justify-center mb-3 shadow-lg">
+          <svg class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+        </div>
+        <h3 class="text-base font-extrabold text-stone-800">Drop PDF Coloring Book Here</h3>
+        <p class="text-xs text-stone-600 mt-1">All pages will load cleanly ready to color</p>
+      </div>
+
+      <!-- Loading Overlay -->
+      <div id="loadingOverlay" class="hidden absolute inset-0 bg-stone-900/30 backdrop-blur-xs z-40 flex items-center justify-center p-4">
+        <div class="bg-white px-5 py-4 rounded-2xl shadow-xl flex items-center gap-3.5 border border-stone-100">
+          <div class="w-6 h-6 border-3 border-orange-500 border-t-transparent rounded-full animate-spin shrink-0"></div>
+          <div>
+            <p id="loadingTitle" class="text-sm font-extrabold text-stone-800">Rendering Page...</p>
+            <p id="loadingSub" class="text-xs text-stone-500">Preparing crisp outlines</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3-Layer Canvas Stack -->
+      <div id="canvasStack">
+        <canvas id="paperCanvas" class="studio-layer"></canvas>
+        <canvas id="colorCanvas" class="studio-layer"></canvas>
+        <canvas id="lineArtCanvas" class="studio-layer"></canvas>
+      </div>
+
+      <!-- Bottom-Right Floating Zoom Pill (Hidden in Fullscreen) -->
+      <div id="zoomPill" class="hide-in-fullscreen absolute bottom-3 right-3 bg-white/95 backdrop-blur-md border border-stone-200 shadow-md rounded-xl p-1 flex items-center gap-1 z-20">
+        <button id="btnZoomOut" class="w-8 h-8 rounded-lg hover:bg-stone-100 active:scale-95 text-stone-700 flex items-center justify-center transition" title="Zoom Out">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        </button>
+        <button id="btnZoomFit" class="h-8 px-2 rounded-lg bg-orange-50 hover:bg-orange-100 active:scale-95 text-orange-700 text-xs font-extrabold transition" title="Fit Page to Screen">
+          <span id="zoomPercentText">100%</span>
+        </button>
+        <button id="btnZoomIn" class="w-8 h-8 rounded-lg hover:bg-stone-100 active:scale-95 text-stone-700 flex items-center justify-center transition" title="Zoom In">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+        </button>
+      </div>
+
+      <!-- Subtle Gesture Hint Pill -->
+      <div id="gestureHint" class="pointer-events-none absolute top-2.5 left-1/2 -translate-x-1/2 bg-stone-900/75 text-white text-[11px] font-semibold px-3 py-1 rounded-full backdrop-blur-xs whitespace-nowrap transition-opacity duration-500 z-10">
+        1 finger to color • 2 fingers to pinch & move
+      </div>
+    </main>
+
+    <!-- =======================================================================
+         TOOL & COLOR DOCK (#bottomDock -> splits into #leftToolRail + #rightColorRail in landscape)
+         ======================================================================= -->
+    <aside id="bottomDock">
+      
+      <!-- Left Tool Rail (Contains all 9 brushes/tools + compact size dots + clear button) -->
+      <div id="leftToolRail">
+        <div id="toolList" class="no-scrollbar">
+          <!-- 1. Marker -->
+          <button data-tool="marker" class="tool-btn min-w-[58px] h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-stone-100 text-stone-700 hover:bg-stone-200 shrink-0" title="Marker">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+            <span class="text-[10px] font-bold">Marker</span>
+          </button>
+
+          <!-- 2. Colored Pencil -->
+          <button data-tool="pencil" class="tool-btn min-w-[58px] h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-stone-100 text-stone-700 hover:bg-stone-200 shrink-0" title="Colored Pencil">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>
+            <span class="text-[10px] font-bold">Pencil</span>
+          </button>
+
+          <!-- 3. Crayon (Default Active) -->
+          <button data-tool="crayon" class="tool-btn active min-w-[58px] h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-orange-500 text-white shadow-2xs shrink-0" title="Wax Crayon">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19 7-7 3 3-7 7-3-3z"/><path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="m2 2 7.586 7.586"/></svg>
+            <span class="text-[10px] font-bold">Crayon</span>
+          </button>
+
+          <!-- 4. Watercolor -->
+          <button data-tool="watercolor" class="tool-btn min-w-[58px] h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-stone-100 text-stone-700 hover:bg-stone-200 shrink-0" title="Watercolor Wash">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+            <span class="text-[10px] font-bold">Water</span>
+          </button>
+
+          <!-- 5. Gel Pen -->
+          <button data-tool="gelpen" class="tool-btn min-w-[58px] h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-stone-100 text-stone-700 hover:bg-stone-200 shrink-0" title="Fine Gel Pen">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>
+            <span class="text-[10px] font-bold">Gel Pen</span>
+          </button>
+
+          <!-- 6. Fill Bucket -->
+          <button data-tool="fill" class="tool-btn min-w-[58px] h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-stone-100 text-stone-700 hover:bg-stone-200 shrink-0" title="Magic Fill Bucket">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z"/><path d="m5 2 5 5"/><path d="M2 13h15"/><path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z"/></svg>
+            <span class="text-[10px] font-bold">Fill</span>
+          </button>
+
+          <!-- 7. Eraser -->
+          <button data-tool="eraser" class="tool-btn min-w-[58px] h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-stone-100 text-stone-700 hover:bg-stone-200 shrink-0" title="Eraser (Colors only)">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>
+            <span class="text-[10px] font-bold">Eraser</span>
+          </button>
+
+          <!-- 8. Eyedropper -->
+          <button data-tool="eyedropper" class="tool-btn min-w-[58px] h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-stone-100 text-stone-700 hover:bg-stone-200 shrink-0" title="Pick Color from Page">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg>
+            <span class="text-[10px] font-bold">Picker</span>
+          </button>
+
+          <!-- 9. Hand / Pan & Zoom -->
+          <button data-tool="pan" class="tool-btn min-w-[58px] h-[48px] rounded-xl flex flex-col items-center justify-center gap-0.5 transition bg-stone-100 text-stone-700 hover:bg-stone-200 shrink-0" title="Pan & Move Page">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>
+            <span class="text-[10px] font-bold">Move</span>
+          </button>
+        </div>
+
+        <!-- Brush Size Dots + Clear Page Button -->
+        <div id="sizeAndActionsRow">
+          <div id="sizeList">
+            <button data-size="8" class="size-btn w-8 h-8 rounded-lg flex items-center justify-center text-stone-700 hover:bg-white transition" title="Small Brush">
+              <span class="w-1.5 h-1.5 rounded-full bg-current"></span>
+            </button>
+            <button data-size="18" class="size-btn active w-8 h-8 rounded-lg bg-white text-orange-600 shadow-2xs flex items-center justify-center transition" title="Medium Brush">
+              <span class="w-3 h-3 rounded-full bg-current"></span>
+            </button>
+            <button data-size="34" class="size-btn w-8 h-8 rounded-lg flex items-center justify-center text-stone-700 hover:bg-white transition" title="Large Brush">
+              <span class="w-4 h-4 rounded-full bg-current"></span>
+            </button>
+            <button data-size="56" class="size-btn w-8 h-8 rounded-lg flex items-center justify-center text-stone-700 hover:bg-white transition" title="Extra Large Brush">
+              <span class="w-5.5 h-5.5 rounded-full bg-current"></span>
+            </button>
+          </div>
+
+          <div id="landscapeClearWrap" class="hide-in-fullscreen hide-in-kid-lock">
+            <button id="btnClearPage" class="h-9 px-3 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold inline-flex items-center justify-center gap-1 active:scale-95 transition" title="Clear Current Page">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              <span class="landscape:hidden">Clear</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Color Rail (Color Swatches + Custom Color Wheel) -->
+      <div id="rightColorRail" class="no-scrollbar">
+        <label class="relative w-10 h-10 rounded-full shrink-0 cursor-pointer shadow-xs ring-2 ring-stone-200 overflow-hidden flex items-center justify-center active:scale-90 transition" style="background: conic-gradient(#ff595e, #ffca3a, #8ac926, #1982c4, #6a4c93, #ff595e);" title="Custom Color Picker">
+          <input id="customColorInput" type="color" value="#ff595e" class="opacity-0 absolute inset-0 w-full h-full cursor-pointer" />
+          <span class="w-4 h-4 rounded-full bg-white/95 flex items-center justify-center shadow-2xs pointer-events-none">
+            <svg class="w-3 h-3 text-stone-800" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </span>
+        </label>
+        <!-- Swatches populated dynamically -->
+      </div>
+
+    </aside>
+  </div>
+
+  <!-- =========================================================================
+       VISUAL PAGE THUMBNAIL DRAWER MODAL (#drawerModal)
+       ========================================================================= -->
+  <div id="drawerModal" class="hidden fixed inset-0 bg-stone-900/50 backdrop-blur-xs z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="bg-white w-full sm:max-w-2xl max-h-[82dvh] rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-stone-200">
+      <div class="px-5 py-3.5 border-b border-stone-200 flex items-center justify-between shrink-0">
+        <div>
+          <h3 class="text-base font-extrabold text-stone-800">Coloring Book Pages</h3>
+          <p id="drawerBookSubtitle" class="text-xs text-stone-500">Tap any page to switch</p>
+        </div>
+        <button id="btnCloseDrawer" class="w-10 h-10 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 flex items-center justify-center transition">
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div id="drawerGrid" class="p-4 overflow-y-auto grid grid-cols-2 sm:grid-cols-3 gap-3.5">
+        <!-- Thumbnails populated dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- =========================================================================
+       CLEAR PAGE CONFIRMATION MODAL (#clearModal)
+       ========================================================================= -->
+  <div id="clearModal" class="hidden fixed inset-0 bg-stone-900/45 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-stone-100 space-y-4">
+      <div>
+        <h4 class="text-base font-extrabold text-stone-800">Start This Page Over?</h4>
+        <p class="text-xs text-stone-500 mt-1 leading-relaxed">This clears all colors on the current page while keeping the black outlines intact.</p>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button id="btnCancelClear" class="h-10 px-4 rounded-xl text-xs font-bold text-stone-600 hover:bg-stone-100 transition">Cancel</button>
+        <button id="btnConfirmClear" class="h-10 px-4 rounded-xl text-xs font-bold bg-red-600 hover:bg-red-700 text-white transition">Clear Page</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Non-blocking Toast Banner (#toastBanner) -->
+  <div id="toastBanner" class="fixed top-16 left-1/2 -translate-x-1/2 bg-stone-900 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg z-50 opacity-0 pointer-events-none transition-opacity duration-200 whitespace-nowrap">
+    Ready to color!
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. PDF.JS WORKER SETUP WITH GRACEFUL FALLBACK
+    // =========================================================================
+    if (window.pdfjsLib) {
+      try {
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      } catch (e) {
+        console.warn('PDF.js worker config fallback:', e);
+      }
+    }
+
+    // =========================================================================
+    // 2. STUDIO STATE & DOM REFERENCES
+    // =========================================================================
+    const PALETTE_COLORS = [
+      '#ff595e', '#ff924c', '#ffca3a', '#8ac926',
+      '#1982c4', '#6a4c93', '#ff70a6', '#00bbf9',
+      '#2ec4b6', '#a47148', '#f7d1ba', '#ffccd5',
+      '#cdb4db', '#52b788', '#343a40', '#ffffff'
+    ];
+
+    const state = {
+      mode: 'sample', // 'sample' | 'pdf'
+      bookTitle: 'Kids Sample Coloring Book',
+      pdfDoc: null,
+      totalPages: 3,
+      currentPage: 1,
+      pageWidth: 1000,
+      pageHeight: 1300,
+
+      // Per-page persistence:
+      // { [pageNum]: { colorDataUrl: string|null, undoStack: string[], redoStack: string[], lineArtCanvas: HTMLCanvasElement|null } }
+      pages: {},
+
+      // Active tool state
+      tool: 'crayon',
+      color: '#ff595e',
+      size: 18,
+      palmLock: false,
+      kidLock: false,
+      isPseudoFullscreen: false,
+
+      // Viewport pan & zoom
+      zoom: 1,
+      panX: 0,
+      panY: 0,
+
+      // Pointer & multi-touch gesture tracking
+      pointers: new Map(),
+      isDrawing: false,
+      isPanning: false,
+      isPinching: false,
+      lastX: 0,
+      lastY: 0,
+      lastPanX: 0,
+      lastPanY: 0,
+      prevPinchDist: 0,
+      prevPinchMidX: 0,
+      prevPinchMidY: 0,
+      hasDrawn: false
+    };
+
+    const viewport = document.getElementById('canvasViewport');
+    const canvasStack = document.getElementById('canvasStack');
+    const paperCanvas = document.getElementById('paperCanvas');
+    const colorCanvas = document.getElementById('colorCanvas');
+    const lineArtCanvas = document.getElementById('lineArtCanvas');
+    const brushRing = document.getElementById('brushRing');
+
+    const paperCtx = paperCanvas.getContext('2d', { willReadFrequently: true });
+    const colorCtx = colorCanvas.getContext('2d', { willReadFrequently: true });
+    const lineArtCtx = lineArtCanvas.getContext('2d', { willReadFrequently: true });
+
+    // =========================================================================
+    // 3. BUILT-IN HIGH-RESOLUTION PROCEDURAL COLORING PAGES (3 PAGES)
+    // =========================================================================
+    function generateSamplePage(pageNum, canvas) {
+      const w = 1000;
+      const h = 1300;
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = '#111111';
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      // Decorative page border
+      ctx.lineWidth = 8;
+      ctx.strokeRect(42, 42, w - 84, h - 84);
+
+      if (pageNum === 1) {
+        // PAGE 1: MANDALA FLOWER
+        const cx = w / 2;
+        const cy = h / 2;
+
+        // Corner floral accents
+        const corners = [[120, 120], [w - 120, 120], [120, h - 120], [w - 120, h - 120]];
+        corners.forEach(([kx, ky]) => {
+          ctx.lineWidth = 5;
+          for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.arc(kx + Math.cos(a) * 26, ky + Math.sin(a) * 26, 18, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(kx, ky, 16, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        });
+
+        // Outer Scallop Ring (24 petals)
+        ctx.lineWidth = 5;
+        for (let i = 0; i < 24; i++) {
+          const a = (i / 24) * Math.PI * 2;
+          const nextA = ((i + 1) / 24) * Math.PI * 2;
+          const midA = (a + nextA) / 2;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(a) * 330, cy + Math.sin(a) * 330);
+          ctx.quadraticCurveTo(
+            cx + Math.cos(midA) * 435,
+            cy + Math.sin(midA) * 435,
+            cx + Math.cos(nextA) * 330,
+            cy + Math.sin(nextA) * 330
+          );
+          ctx.stroke();
+        }
+
+        // Concentric Mandala Rings
+        [330, 295, 225, 150, 75].forEach((r, idx) => {
+          ctx.lineWidth = idx % 2 === 0 ? 6 : 4;
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.stroke();
+        });
+
+        // Mid-layer 16 Lotus Petals
+        ctx.lineWidth = 5;
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * Math.PI * 2;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(a);
+          ctx.beginPath();
+          ctx.moveTo(0, -150);
+          ctx.quadraticCurveTo(42, -225, 0, -295);
+          ctx.quadraticCurveTo(-42, -225, 0, -150);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // Inner 8 Heart Petals
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(a);
+          ctx.beginPath();
+          ctx.moveTo(0, -75);
+          ctx.bezierCurveTo(45, -105, 35, -145, 0, -150);
+          ctx.bezierCurveTo(-35, -145, -45, -105, 0, -75);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // Center Star
+        ctx.beginPath();
+        for (let i = 0; i < 16; i++) {
+          const r = i % 2 === 0 ? 55 : 25;
+          const a = (i / 16) * Math.PI * 2;
+          if (i === 0) ctx.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+          else ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+        }
+        ctx.closePath();
+        ctx.stroke();
+
+      } else if (pageNum === 2) {
+        // PAGE 2: CUTE WOODLAND OWL ON BRANCH
+        const cx = w / 2;
+
+        // Tree Branch
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.moveTo(42, 960);
+        ctx.quadraticCurveTo(480, 910, w - 42, 975);
+        ctx.moveTo(42, 1015);
+        ctx.quadraticCurveTo(480, 965, w - 42, 1030);
+        ctx.stroke();
+
+        // Branch Leaves
+        const drawLeaf = (lx, ly, rot) => {
+          ctx.save();
+          ctx.translate(lx, ly);
+          ctx.rotate(rot);
+          ctx.fillStyle = '#ffffff';
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.quadraticCurveTo(45, -35, 95, 0);
+          ctx.quadraticCurveTo(45, 35, 0, 0);
+          ctx.fill();
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.lineTo(80, 0);
+          ctx.stroke();
+          ctx.restore();
+        };
+        drawLeaf(150, 950, -0.6);
+        drawLeaf(210, 1005, 0.7);
+        drawLeaf(780, 960, -0.5);
+        drawLeaf(830, 1020, 0.6);
+
+        // Owl Wings
+        ctx.fillStyle = '#ffffff';
+        ctx.lineWidth = 7;
+        [-1, 1].forEach(dir => {
+          ctx.beginPath();
+          ctx.ellipse(cx + dir * 215, 670, 75, 195, dir * 0.22, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        });
+
+        // Owl Main Body & Ear Tufts
+        ctx.beginPath();
+        ctx.moveTo(cx - 180, 290);
+        ctx.lineTo(cx - 105, 355);
+        ctx.quadraticCurveTo(cx, 330, cx + 105, 355);
+        ctx.lineTo(cx + 180, 290);
+        ctx.quadraticCurveTo(cx + 235, 440, cx + 215, 680);
+        ctx.quadraticCurveTo(cx + 195, 925, cx, 935);
+        ctx.quadraticCurveTo(cx - 195, 925, cx - 215, 680);
+        ctx.quadraticCurveTo(cx - 235, 440, cx - 180, 290);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Belly Scallops
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.ellipse(cx, 715, 145, 175, 0, 0, Math.PI * 2);
+        ctx.stroke();
+
+        for (let row = 0; row < 3; row++) {
+          const y = 635 + row * 65;
+          const cols = row === 1 ? 3 : 2;
+          for (let c = 0; c < cols; c++) {
+            const x = cx + (c - (cols - 1) / 2) * 75;
+            ctx.beginPath();
+            ctx.arc(x, y, 28, 0.1 * Math.PI, 0.9 * Math.PI);
+            ctx.stroke();
+          }
+        }
+
+        // Big Owl Eyes
+        [-92, 92].forEach(dx => {
+          ctx.fillStyle = '#ffffff';
+          ctx.lineWidth = 6;
+          ctx.beginPath();
+          ctx.arc(cx + dx, 465, 76, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(cx + dx, 465, 48, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.fillStyle = '#111111';
+          ctx.beginPath();
+          ctx.arc(cx + dx, 465, 25, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(cx + dx - 9, 456, 8, 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        // Cute Beak
+        ctx.fillStyle = '#ffffff';
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(cx - 28, 520);
+        ctx.lineTo(cx + 28, 520);
+        ctx.lineTo(cx, 575);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Owl Feet gripping branch
+        [-65, 65].forEach(fx => {
+          [-16, 0, 16].forEach(toe => {
+            ctx.fillStyle = '#ffffff';
+            ctx.lineWidth = 5;
+            ctx.beginPath();
+            ctx.ellipse(cx + fx + toe, 938, 10, 22, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          });
+        });
+
+        // Crescent Moon & Stars in Sky
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(185, 185, 52, 0.25 * Math.PI, 1.65 * Math.PI);
+        ctx.quadraticCurveTo(160, 185, 185 + Math.cos(0.25 * Math.PI) * 52, 185 + Math.sin(0.25 * Math.PI) * 52);
+        ctx.stroke();
+
+      } else {
+        // PAGE 3: ROCKET & STARS
+        const cx = w / 2;
+
+        // Stars
+        const stars = [[180, 200, 30], [820, 185, 34], [155, 560, 24], [845, 520, 28], [210, 960, 30], [805, 925, 25]];
+        stars.forEach(([sx, sy, sr]) => {
+          ctx.lineWidth = 5;
+          ctx.beginPath();
+          for (let i = 0; i < 10; i++) {
+            const r = i % 2 === 0 ? sr : sr * 0.42;
+            const a = (i * Math.PI) / 5 - Math.PI / 2;
+            if (i === 0) ctx.moveTo(sx + Math.cos(a) * r, sy + Math.sin(a) * r);
+            else ctx.lineTo(sx + Math.cos(a) * r, sy + Math.sin(a) * r);
+          }
+          ctx.closePath();
+          ctx.stroke();
+        });
+
+        // Ringed Planet
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(210, 355, 56, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.ellipse(210, 355, 104, 24, -0.3, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Rocket Fins
+        ctx.fillStyle = '#ffffff';
+        ctx.lineWidth = 7;
+        [-1, 1].forEach(dir => {
+          ctx.beginPath();
+          ctx.moveTo(cx + dir * 115, 665);
+          ctx.quadraticCurveTo(cx + dir * 245, 735, cx + dir * 225, 895);
+          ctx.lineTo(cx + dir * 110, 845);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        });
+
+        // Rocket Body
+        ctx.beginPath();
+        ctx.moveTo(cx, 195);
+        ctx.bezierCurveTo(cx + 165, 370, cx + 165, 680, cx + 110, 865);
+        ctx.lineTo(cx - 110, 865);
+        ctx.bezierCurveTo(cx - 165, 680, cx - 165, 370, cx, 195);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Nose Cone Stripe
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(cx - 88, 355);
+        ctx.quadraticCurveTo(cx, 385, cx + 88, 355);
+        ctx.stroke();
+
+        // Porthole Window
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.arc(cx, 535, 76, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(cx, 535, 54, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Exhaust Flames
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.moveTo(cx - 75, 865);
+        ctx.quadraticCurveTo(cx - 95, 995, cx - 35, 1045);
+        ctx.quadraticCurveTo(cx, 1135, cx + 35, 1045);
+        ctx.quadraticCurveTo(cx + 95, 995, cx + 75, 865);
+        ctx.closePath();
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(cx - 38, 865);
+        ctx.quadraticCurveTo(cx, 1020, cx + 38, 865);
+        ctx.stroke();
+      }
+    }
+
+    // =========================================================================
+    // 4. PDF.JS PAGE RENDERER & WHITE-TO-TRANSPARENT LINE ART EXTRACTOR
+    // =========================================================================
+    function extractTransparentLineArt(sourceCanvas) {
+      const w = sourceCanvas.width;
+      const h = sourceCanvas.height;
+      const outCanvas = document.createElement('canvas');
+      outCanvas.width = w;
+      outCanvas.height = h;
+      const outCtx = outCanvas.getContext('2d');
+
+      const srcCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+      const imgData = srcCtx.getImageData(0, 0, w, h);
+      const data = imgData.data;
+
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+
+        if (luminance > 235) {
+          data[i + 3] = 0; // Pure white paper -> transparent
+        } else {
+          // Dark lines remain crisp black on top of user colors
+          const alpha = Math.min(255, Math.max(0, (245 - luminance) * 1.5));
+          data[i] = 17;
+          data[i + 1] = 17;
+          data[i + 2] = 17;
+          data[i + 3] = alpha;
+        }
+      }
+
+      outCtx.putImageData(imgData, 0, 0);
+      return outCanvas;
+    }
+
+    async function renderPdfPageToCanvas(pdfDoc, pageNum) {
+      const pdfPage = await pdfDoc.getPage(pageNum);
+      const baseViewport = pdfPage.getViewport({ scale: 1 });
+
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const desiredWidth = Math.max(1200, Math.min(1800, 1200 * dpr));
+      const scale = desiredWidth / baseViewport.width;
+      const scaledViewport = pdfPage.getViewport({ scale });
+
+      const offscreen = document.createElement('canvas');
+      offscreen.width = Math.round(scaledViewport.width);
+      offscreen.height = Math.round(scaledViewport.height);
+      const offCtx = offscreen.getContext('2d');
+
+      // Fill solid white before rendering PDF page
+      offCtx.fillStyle = '#ffffff';
+      offCtx.fillRect(0, 0, offscreen.width, offscreen.height);
+
+      await pdfPage.render({
+        canvasContext: offCtx,
+        viewport: scaledViewport
+      }).promise;
+
+      return extractTransparentLineArt(offscreen);
+    }
+
+    // =========================================================================
+    // 5. PER-PAGE STATE PERSISTENCE, UNDO/REDO & PAGE LOADING
+    // =========================================================================
+    function ensurePageRecord(pageNum) {
+      if (!state.pages[pageNum]) {
+        state.pages[pageNum] = {
+          colorDataUrl: null,
+          undoStack: [],
+          redoStack: [],
+          lineArtCanvas: null
+        };
+      }
+      return state.pages[pageNum];
+    }
+
+    function updateHistoryButtons() {
+      const rec = state.pages[state.currentPage];
+      document.getElementById('btnUndo').disabled = !rec || rec.undoStack.length === 0;
+      document.getElementById('btnRedo').disabled = !rec || rec.redoStack.length === 0;
+    }
+
+    function pushUndoSnapshot() {
+      const rec = ensurePageRecord(state.currentPage);
+      if (rec.undoStack.length >= 25) rec.undoStack.shift();
+      rec.undoStack.push(colorCanvas.toDataURL('image/png'));
+      rec.redoStack = [];
+      updateHistoryButtons();
+    }
+
+    function saveCurrentColorLayer() {
+      if (colorCanvas.width === 0 || colorCanvas.height === 0) return;
+      const rec = ensurePageRecord(state.currentPage);
+      rec.colorDataUrl = colorCanvas.toDataURL('image/png');
+    }
+
+    async function loadPage(pageNum, fitAfterLoad = true) {
+      if (pageNum < 1 || pageNum > state.totalPages) return;
+
+      // Save previous page coloring before switching
+      if (state.pages[state.currentPage] && colorCanvas.width > 0) {
+        saveCurrentColorLayer();
+      }
+
+      state.currentPage = pageNum;
+      const rec = ensurePageRecord(pageNum);
+
+      showLoading(`Opening Page ${pageNum} of ${state.totalPages}...`, 'Preparing crisp outlines');
+
+      try {
+        if (!rec.lineArtCanvas) {
+          if (state.mode === 'pdf' && state.pdfDoc) {
+            rec.lineArtCanvas = await renderPdfPageToCanvas(state.pdfDoc, pageNum);
+          } else {
+            const off = document.createElement('canvas');
+            generateSamplePage(pageNum, off);
+            rec.lineArtCanvas = off;
+          }
+        }
+
+        const lineSrc = rec.lineArtCanvas;
+        state.pageWidth = lineSrc.width;
+        state.pageHeight = lineSrc.height;
+
+        [paperCanvas, colorCanvas, lineArtCanvas].forEach(c => {
+          c.width = state.pageWidth;
+          c.height = state.pageHeight;
+        });
+
+        canvasStack.style.width = `${state.pageWidth}px`;
+        canvasStack.style.height = `${state.pageHeight}px`;
+
+        // Layer 1: Clean White Paper
+        paperCtx.fillStyle = '#ffffff';
+        paperCtx.fillRect(0, 0, state.pageWidth, state.pageHeight);
+
+        // Layer 3: Crisp Black Outlines on Top
+        lineArtCtx.clearRect(0, 0, state.pageWidth, state.pageHeight);
+        lineArtCtx.drawImage(lineSrc, 0, 0);
+
+        // Layer 2: Restore Saved Coloring for this Page
+        colorCtx.clearRect(0, 0, state.pageWidth, state.pageHeight);
+        if (rec.colorDataUrl) {
+          await new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => {
+              colorCtx.drawImage(img, 0, 0);
+              resolve();
+            };
+            img.onerror = resolve;
+            img.src = rec.colorDataUrl;
+          });
+        }
+
+        // Update Page UI
+        document.getElementById('pageCurrentText').textContent = state.currentPage;
+        document.getElementById('pageTotalText').textContent = state.totalPages;
+        document.getElementById('btnPrevPage').disabled = state.currentPage <= 1;
+        document.getElementById('btnNextPage').disabled = state.currentPage >= state.totalPages;
+        updateHistoryButtons();
+
+        if (fitAfterLoad) {
+          requestAnimationFrame(() => fitPageToViewport());
+        }
+      } catch (err) {
+        console.error('Error loading page:', err);
+        showToast('Could not render PDF page.');
+      } finally {
+        hideLoading();
+      }
+    }
+
+    // =========================================================================
+    // 6. VIEWPORT PAN, ZOOM & ACCURATE SCREEN-TO-CANVAS COORDINATE MAPPING
+    // =========================================================================
+    function applyTransform() {
+      canvasStack.style.transform = `translate3d(${state.panX}px, ${state.panY}px, 0) scale(${state.zoom})`;
+      document.getElementById('zoomPercentText').textContent = `${Math.round(state.zoom * 100)}%`;
+    }
+
+    function fitPageToViewport() {
+      const rect = viewport.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
+
+      const padding = window.innerWidth < 640 ? 18 : 36;
+      const availW = Math.max(60, rect.width - padding);
+      const availH = Math.max(60, rect.height - padding);
+
+      state.zoom = Math.min(availW / state.pageWidth, availH / state.pageHeight);
+      const renderedW = state.pageWidth * state.zoom;
+      const renderedH = state.pageHeight * state.zoom;
+
+      state.panX = (rect.width - renderedW) / 2;
+      state.panY = (rect.height - renderedH) / 2;
+      applyTransform();
+    }
+
+    function zoomAroundPoint(factor, clientX, clientY) {
+      const rect = viewport.getBoundingClientRect();
+      const px = clientX - rect.left;
+      const py = clientY - rect.top;
+
+      const prevZoom = state.zoom;
+      const nextZoom = Math.min(Math.max(prevZoom * factor, 0.15), 5.0);
+      const ratio = nextZoom / prevZoom;
+
+      state.panX = px - (px - state.panX) * ratio;
+      state.panY = py - (py - state.panY) * ratio;
+      state.zoom = nextZoom;
+      applyTransform();
+    }
+
+    function mapClientToCanvas(clientX, clientY) {
+      const rect = canvasStack.getBoundingClientRect();
+      return {
+        x: (clientX - rect.left) * (state.pageWidth / rect.width),
+        y: (clientY - rect.top) * (state.pageHeight / rect.height)
+      };
+    }
+
+    // =========================================================================
+    // 7. ALL 9 BRUSHES & HIGH-SPEED SCANLINE FLOOD FILL
+    // =========================================================================
+    function hexToRgb(hex) {
+      const clean = hex.replace('#', '');
+      const num = parseInt(clean, 16);
+      return {
+        r: (num >> 16) & 255,
+        g: (num >> 8) & 255,
+        b: num & 255
+      };
+    }
+
+    function drawBrushStroke(x1, y1, x2, y2, pressure = 0.5) {
+      const tool = state.tool;
+      const pMult = pressure > 0 ? (0.65 + pressure * 0.55) : 1;
+      const radius = (state.size * pMult) / 2;
+      const { r, g, b } = hexToRgb(state.color);
+
+      colorCtx.save();
+
+      if (tool === 'eraser') {
+        // Erases ONLY the color layer; lineArtCanvas sits safely on top untouched
+        colorCtx.globalCompositeOperation = 'destination-out';
+        colorCtx.strokeStyle = 'rgba(0,0,0,1)';
+        colorCtx.lineWidth = state.size * pMult;
+        colorCtx.lineCap = 'round';
+        colorCtx.lineJoin = 'round';
+        colorCtx.beginPath();
+        colorCtx.moveTo(x1, y1);
+        colorCtx.lineTo(x2, y2);
+        colorCtx.stroke();
+      } else if (tool === 'marker') {
+        colorCtx.globalCompositeOperation = 'multiply';
+        colorCtx.globalAlpha = 0.28;
+        colorCtx.strokeStyle = state.color;
+        colorCtx.lineWidth = state.size * pMult;
+        colorCtx.lineCap = 'round';
+        colorCtx.lineJoin = 'round';
+        colorCtx.beginPath();
+        colorCtx.moveTo(x1, y1);
+        colorCtx.lineTo(x2, y2);
+        colorCtx.stroke();
+      } else if (tool === 'gelpen') {
+        colorCtx.globalCompositeOperation = 'source-over';
+        colorCtx.globalAlpha = 0.98;
+        colorCtx.strokeStyle = state.color;
+        colorCtx.lineWidth = Math.max(2.5, state.size * 0.32 * pMult);
+        colorCtx.lineCap = 'round';
+        colorCtx.lineJoin = 'round';
+        colorCtx.beginPath();
+        colorCtx.moveTo(x1, y1);
+        colorCtx.lineTo(x2, y2);
+        colorCtx.stroke();
+      } else if (tool === 'watercolor') {
+        const dist = Math.hypot(x2 - x1, y2 - y1);
+        const steps = Math.max(1, Math.ceil(dist / Math.max(2, radius * 0.25)));
+        colorCtx.globalCompositeOperation = 'multiply';
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const x = x1 + (x2 - x1) * t;
+          const y = y1 + (y2 - y1) * t;
+          const grad = colorCtx.createRadialGradient(x, y, radius * 0.1, x, y, radius * 1.35);
+          grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.08)`);
+          grad.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, 0.05)`);
+          grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+          colorCtx.fillStyle = grad;
+          colorCtx.beginPath();
+          colorCtx.arc(x, y, radius * 1.35, 0, Math.PI * 2);
+          colorCtx.fill();
+        }
+      } else if (tool === 'crayon' || tool === 'pencil') {
+        const dist = Math.hypot(x2 - x1, y2 - y1);
+        const stepLen = Math.max(1.5, radius * (tool === 'crayon' ? 0.22 : 0.3));
+        const steps = Math.max(1, Math.ceil(dist / stepLen));
+        const grains = tool === 'crayon' ? 24 : 14;
+        const spread = tool === 'crayon' ? radius * 1.05 : radius * 0.78;
+        colorCtx.fillStyle = `rgba(${r}, ${g}, ${b}, ${tool === 'crayon' ? 0.48 : 0.36})`;
+
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const cx = x1 + (x2 - x1) * t;
+          const cy = y1 + (y2 - y1) * t;
+          for (let gIdx = 0; gIdx < grains; gIdx++) {
+            const ang = Math.random() * Math.PI * 2;
+            const rad = Math.sqrt(Math.random()) * spread;
+            const dot = tool === 'crayon' ? (1.5 + Math.random() * 2.3) : (1.0 + Math.random() * 1.2);
+            colorCtx.fillRect(cx + Math.cos(ang) * rad, cy + Math.sin(ang) * rad, dot, dot);
+          }
+        }
+      }
+
+      colorCtx.restore();
+    }
+
+    // Fast Scanline Flood Fill on #colorCanvas bounded by #lineArtCanvas alpha mask
+    function scanlineFloodFill(startX, startY) {
+      const x0 = Math.floor(startX);
+      const y0 = Math.floor(startY);
+      const w = state.pageWidth;
+      const h = state.pageHeight;
+
+      if (x0 < 0 || x0 >= w || y0 < 0 || y0 >= h) return;
+
+      const lineData = lineArtCtx.getImageData(0, 0, w, h).data;
+      const startIdx = (y0 * w + x0) * 4;
+
+      if (lineData[startIdx + 3] > 140) {
+        showToast('Tap inside a white space to fill!');
+        return;
+      }
+
+      pushUndoSnapshot();
+
+      const img = colorCtx.getImageData(0, 0, w, h);
+      const data = img.data;
+
+      const tr = data[startIdx];
+      const tg = data[startIdx + 1];
+      const tb = data[startIdx + 2];
+      const ta = data[startIdx + 3];
+
+      const fill = hexToRgb(state.color);
+      if (
+        Math.abs(tr - fill.r) < 5 &&
+        Math.abs(tg - fill.g) < 5 &&
+        Math.abs(tb - fill.b) < 5 &&
+        ta > 240
+      ) {
+        return;
+      }
+
+      const visited = new Uint8Array(w * h);
+
+      function matchesTarget(pixelIdx) {
+        if (visited[pixelIdx]) return false;
+        const idx = pixelIdx * 4;
+        // Stop at dark line art boundary
+        if (lineData[idx + 3] > 125) return false;
+        // Respect previously colored edges
+        return (
+          Math.abs(data[idx] - tr) <= 36 &&
+          Math.abs(data[idx + 1] - tg) <= 36 &&
+          Math.abs(data[idx + 2] - tb) <= 36 &&
+          Math.abs(data[idx + 3] - ta) <= 64
+        );
+      }
+
+      const stack = [[x0, y0]];
+      while (stack.length > 0) {
+        const [x, y] = stack.pop();
+        let lx = x;
+        while (lx >= 0 && matchesTarget(y * w + lx)) {
+          lx--;
+        }
+        lx++;
+
+        let rx = x;
+        while (rx < w && matchesTarget(y * w + rx)) {
+          rx++;
+        }
+        rx--;
+
+        let spanAbove = false;
+        let spanBelow = false;
+
+        for (let px = lx; px <= rx; px++) {
+          const pIdx = y * w + px;
+          visited[pIdx] = 1;
+          const idx = pIdx * 4;
+          data[idx] = fill.r;
+          data[idx + 1] = fill.g;
+          data[idx + 2] = fill.b;
+          data[idx + 3] = 255;
+
+          if (y > 0) {
+            const aboveMatches = matchesTarget((y - 1) * w + px);
+            if (!spanAbove && aboveMatches) {
+              stack.push([px, y - 1]);
+              spanAbove = true;
+            } else if (spanAbove && !aboveMatches) {
+              spanAbove = false;
+            }
+          }
+
+          if (y < h - 1) {
+            const belowMatches = matchesTarget((y + 1) * w + px);
+            if (!spanBelow && belowMatches) {
+              stack.push([px, y + 1]);
+              spanBelow = true;
+            } else if (spanBelow && !belowMatches) {
+              spanBelow = false;
+            }
+          }
+        }
+      }
+
+      colorCtx.putImageData(img, 0, 0);
+      saveCurrentColorLayer();
+    }
+
+    function eyedropperAt(x, y) {
+      const px = Math.floor(x);
+      const py = Math.floor(y);
+      if (px < 0 || px >= state.pageWidth || py < 0 || py >= state.pageHeight) return;
+
+      const d = colorCtx.getImageData(px, py, 1, 1).data;
+      if (d[3] > 20) {
+        const hex = '#' + [d[0], d[1], d[2]].map(v => v.toString(16).padStart(2, '0')).join('');
+        selectColor(hex);
+        showToast(`Picked ${hex.toUpperCase()}`);
+      } else {
+        selectColor('#ffffff');
+        showToast('Picked white paper');
+      }
+      selectTool('crayon');
+    }
+
+    // =========================================================================
+    // 8. POINTER & MULTI-TOUCH GESTURE HANDLING
+    // =========================================================================
+    viewport.addEventListener('pointerdown', (e) => {
+      viewport.setPointerCapture(e.pointerId);
+      state.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+
+      // 2 fingers -> Pinch-to-zoom & pan
+      if (state.pointers.size === 2) {
+        state.isDrawing = false;
+        state.isPanning = false;
+        state.isPinching = true;
+        const pts = Array.from(state.pointers.values());
+        state.prevPinchDist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        state.prevPinchMidX = (pts[0].x + pts[1].x) / 2;
+        state.prevPinchMidY = (pts[0].y + pts[1].y) / 2;
+        return;
+      }
+
+      if (state.pointers.size > 2) return;
+
+      // Move / Pan tool
+      if (state.tool === 'pan') {
+        state.isPanning = true;
+        state.lastPanX = e.clientX;
+        state.lastPanY = e.clientY;
+        return;
+      }
+
+      // Palm Lock ignores touch pointers when user draws with stylus
+      if (state.palmLock && e.pointerType === 'touch') {
+        return;
+      }
+
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+
+      const { x, y } = mapClientToCanvas(e.clientX, e.clientY);
+
+      if (state.tool === 'eyedropper') {
+        eyedropperAt(x, y);
+        return;
+      }
+
+      if (state.tool === 'fill') {
+        scanlineFloodFill(x, y);
+        return;
+      }
+
+      pushUndoSnapshot();
+      state.isDrawing = true;
+      state.lastX = x;
+      state.lastY = y;
+      drawBrushStroke(x, y, x + 0.01, y + 0.01, e.pressure);
+
+      if (!state.hasDrawn) {
+        state.hasDrawn = true;
+        document.getElementById('gestureHint').style.opacity = '0';
+      }
+    });
+
+    viewport.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'mouse' || e.pointerType === 'pen') {
+        const hideRing = ['fill', 'eyedropper', 'pan'].includes(state.tool);
+        const dia = Math.max(6, state.size * state.zoom);
+        brushRing.style.display = hideRing ? 'none' : 'block';
+        brushRing.style.left = `${e.clientX}px`;
+        brushRing.style.top = `${e.clientY}px`;
+        brushRing.style.width = `${dia}px`;
+        brushRing.style.height = `${dia}px`;
+      }
+
+      if (!state.pointers.has(e.pointerId)) return;
+      state.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+
+      if (state.isPanning && state.pointers.size === 1) {
+        state.panX += e.clientX - state.lastPanX;
+        state.panY += e.clientY - state.lastPanY;
+        state.lastPanX = e.clientX;
+        state.lastPanY = e.clientY;
+        applyTransform();
+        return;
+      }
+
+      if (state.isPinching && state.pointers.size === 2) {
+        const pts = Array.from(state.pointers.values());
+        const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        const midX = (pts[0].x + pts[1].x) / 2;
+        const midY = (pts[0].y + pts[1].y) / 2;
+
+        state.panX += midX - state.prevPinchMidX;
+        state.panY += midY - state.prevPinchMidY;
+
+        if (state.prevPinchDist > 10) {
+          zoomAroundPoint(dist / state.prevPinchDist, midX, midY);
+        } else {
+          applyTransform();
+        }
+
+        state.prevPinchDist = dist;
+        state.prevPinchMidX = midX;
+        state.prevPinchMidY = midY;
+        return;
+      }
+
+      if (!state.isDrawing) return;
+
+      const { x, y } = mapClientToCanvas(e.clientX, e.clientY);
+      drawBrushStroke(state.lastX, state.lastY, x, y, e.pressure);
+      state.lastX = x;
+      state.lastY = y;
+    });
+
+    function onPointerEnd(e) {
+      state.pointers.delete(e.pointerId);
+      if (state.pointers.size < 2) state.isPinching = false;
+      if (state.pointers.size === 0) state.isPanning = false;
+      if (state.isDrawing && state.pointers.size === 0) {
+        state.isDrawing = false;
+        saveCurrentColorLayer();
+      }
+    }
+
+    viewport.addEventListener('pointerup', onPointerEnd);
+    viewport.addEventListener('pointercancel', onPointerEnd);
+    viewport.addEventListener('pointerleave', () => {
+      brushRing.style.display = 'none';
+    });
+
+    viewport.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      zoomAroundPoint(e.deltaY < 0 ? 1.12 : 0.89, e.clientX, e.clientY);
+    }, { passive: false });
+
+    // =========================================================================
+    // 9. PDF FILE UPLOAD & DRAG-AND-DROP HANDLERS
+    // =========================================================================
+    async function handlePdfUpload(file) {
+      if (!file) return;
+      showLoading('Opening PDF Coloring Book...', file.name);
+
+      try {
+        const buffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+
+        state.mode = 'pdf';
+        state.bookTitle = file.name.replace(/\.pdf$/i, '');
+        state.pdfDoc = pdf;
+        state.totalPages = pdf.numPages;
+        state.pages = {};
+
+        await loadPage(1, true);
+        showToast(`Loaded "${state.bookTitle}" (${pdf.numPages} page${pdf.numPages > 1 ? 's' : ''})`);
+      } catch (err) {
+        console.error('PDF load failed:', err);
+        showToast('Could not open PDF. Please check the file.');
+      } finally {
+        hideLoading();
+      }
+    }
+
+    document.getElementById('pdfInput').addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handlePdfUpload(e.target.files[0]);
+        e.target.value = '';
+      }
+    });
+
+    const dropOverlay = document.getElementById('dropOverlay');
+    let dragCounter = 0;
+    window.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      dragCounter++;
+      dropOverlay.classList.remove('hidden');
+    });
+    window.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter <= 0) {
+        dragCounter = 0;
+        dropOverlay.classList.add('hidden');
+      }
+    });
+    window.addEventListener('dragover', (e) => e.preventDefault());
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      dropOverlay.classList.add('hidden');
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        handlePdfUpload(e.dataTransfer.files[0]);
+      }
+    });
+
+    document.getElementById('btnSampleBook').addEventListener('click', async () => {
+      state.mode = 'sample';
+      state.bookTitle = 'Kids Sample Coloring Book';
+      state.pdfDoc = null;
+      state.totalPages = 3;
+      state.pages = {};
+      await loadPage(1, true);
+      showToast('Loaded 3-page Sample Coloring Book!');
+    });
+
+    // =========================================================================
+    // 10. FULLSCREEN, KID LOCK, PALM LOCK, UNDO/REDO & EXPORT PNG
+    // =========================================================================
+    function syncFullscreenUI(isFull) {
+      document.body.classList.toggle('is-fullscreen', isFull);
+      document.getElementById('labelFullscreen').textContent = isFull ? 'Exit Full' : 'Fullscreen';
+      const icon = document.getElementById('iconFullscreen');
+      icon.innerHTML = isFull
+        ? '<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>'
+        : '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>';
+      setTimeout(fitPageToViewport, 120);
+    }
+
+    document.getElementById('btnFullscreen').addEventListener('click', async () => {
+      const docEl = document.documentElement;
+      const nativeFs = document.fullscreenElement || document.webkitFullscreenElement;
+
+      if (!nativeFs && !state.isPseudoFullscreen) {
+        try {
+          if (docEl.requestFullscreen) await docEl.requestFullscreen();
+          else if (docEl.webkitRequestFullscreen) await docEl.webkitRequestFullscreen();
+          else throw new Error('No native fullscreen');
+          syncFullscreenUI(true);
+        } catch (_) {
+          state.isPseudoFullscreen = true;
+          syncFullscreenUI(true);
+        }
+      } else {
+        try {
+          if (document.exitFullscreen) await document.exitFullscreen();
+          else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+        } catch (_) {}
+        state.isPseudoFullscreen = false;
+        syncFullscreenUI(false);
+      }
+    });
+
+    document.addEventListener('fullscreenchange', () => {
+      const nativeFs = Boolean(document.fullscreenElement);
+      if (nativeFs) syncFullscreenUI(true);
+      else if (!state.isPseudoFullscreen) syncFullscreenUI(false);
+    });
+
+    document.getElementById('btnKidLock').addEventListener('click', (e) => {
+      state.kidLock = !state.kidLock;
+      document.body.classList.toggle('kid-lock', state.kidLock);
+      const btn = e.currentTarget;
+      const icon = document.getElementById('iconKidLock');
+
+      if (state.kidLock) {
+        btn.classList.remove('bg-stone-100', 'text-stone-700');
+        btn.classList.add('bg-amber-400', 'text-stone-900');
+        icon.innerHTML = '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>';
+        showToast('Kid Lock ON — Extra buttons hidden');
+      } else {
+        btn.classList.add('bg-stone-100', 'text-stone-700');
+        btn.classList.remove('bg-amber-400', 'text-stone-900');
+        icon.innerHTML = '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>';
+        showToast('Kid Lock OFF');
+      }
+    });
+
+    document.getElementById('btnPalmLock').addEventListener('click', (e) => {
+      state.palmLock = !state.palmLock;
+      const btn = e.currentTarget;
+      if (state.palmLock) {
+        btn.classList.remove('bg-stone-100', 'text-stone-700');
+        btn.classList.add('bg-blue-600', 'text-white');
+        showToast('Palm Lock ON — Only stylus draws');
+      } else {
+        btn.classList.add('bg-stone-100', 'text-stone-700');
+        btn.classList.remove('bg-blue-600', 'text-white');
+        showToast('Palm Lock OFF — Finger & stylus draw');
+      }
+    });
+
+    document.getElementById('btnUndo').addEventListener('click', () => {
+      const rec = state.pages[state.currentPage];
+      if (!rec || rec.undoStack.length === 0) return;
+      rec.redoStack.push(colorCanvas.toDataURL('image/png'));
+      const prev = rec.undoStack.pop();
+      const img = new Image();
+      img.onload = () => {
+        colorCtx.clearRect(0, 0, state.pageWidth, state.pageHeight);
+        colorCtx.drawImage(img, 0, 0);
+        saveCurrentColorLayer();
+        updateHistoryButtons();
+      };
+      img.src = prev;
+    });
+
+    document.getElementById('btnRedo').addEventListener('click', () => {
+      const rec = state.pages[state.currentPage];
+      if (!rec || rec.redoStack.length === 0) return;
+      rec.undoStack.push(colorCanvas.toDataURL('image/png'));
+      const next = rec.redoStack.pop();
+      const img = new Image();
+      img.onload = () => {
+        colorCtx.clearRect(0, 0, state.pageWidth, state.pageHeight);
+        colorCtx.drawImage(img, 0, 0);
+        saveCurrentColorLayer();
+        updateHistoryButtons();
+      };
+      img.src = next;
+    });
+
+    document.getElementById('btnExportPng').addEventListener('click', () => {
+      const out = document.createElement('canvas');
+      out.width = state.pageWidth;
+      out.height = state.pageHeight;
+      const oCtx = out.getContext('2d');
+      oCtx.drawImage(paperCanvas, 0, 0);
+      oCtx.drawImage(colorCanvas, 0, 0);
+      oCtx.drawImage(lineArtCanvas, 0, 0);
+
+      const fileName = `${state.bookTitle.replace(/\s+/g, '-').toLowerCase()}-page-${state.currentPage}.png`;
+      out.toBlob(async (blob) => {
+        if (!blob) return;
+        const file = new File([blob], fileName, { type: 'image/png' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          try {
+            await navigator.share({ files: [file], title: 'ChromaStudio Artwork' });
+            return;
+          } catch (_) {}
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        showToast('Saved PNG artwork!');
+      }, 'image/png');
+    });
+
+    // =========================================================================
+    // 11. PAGE DRAWER, TOOL SELECTION, COLOR PALETTE & MODALS
+    // =========================================================================
+    const drawerModal = document.getElementById('drawerModal');
+
+    async function openThumbnailDrawer() {
+      saveCurrentColorLayer();
+      document.getElementById('drawerBookSubtitle').textContent =
+        `${state.bookTitle} • ${state.totalPages} Page${state.totalPages > 1 ? 's' : ''}`;
+      drawerModal.classList.remove('hidden');
+
+      const grid = document.getElementById('drawerGrid');
+      grid.innerHTML = '';
+
+      for (let i = 1; i <= state.totalPages; i++) {
+        const rec = ensurePageRecord(i);
+        const isCurrent = i === state.currentPage;
+
+        if (!rec.lineArtCanvas) {
+          if (state.mode === 'pdf' && state.pdfDoc) {
+            rec.lineArtCanvas = await renderPdfPageToCanvas(state.pdfDoc, i);
+          } else {
+            const off = document.createElement('canvas');
+            generateSamplePage(i, off);
+            rec.lineArtCanvas = off;
+          }
+        }
+
+        const card = document.createElement('button');
+        card.className = `rounded-2xl p-2 border-2 flex flex-col gap-1.5 text-left transition active:scale-95 ${
+          isCurrent ? 'border-orange-500 bg-orange-50' : 'border-stone-200 bg-stone-50 hover:border-stone-300'
+        }`;
+
+        const box = document.createElement('div');
+        box.className = 'w-full aspect-[3/4] bg-white rounded-xl border border-stone-200 overflow-hidden flex items-center justify-center relative';
+
+        const thumb = document.createElement('canvas');
+        thumb.width = 210;
+        thumb.height = 280;
+        const tCtx = thumb.getContext('2d');
+        tCtx.fillStyle = '#ffffff';
+        tCtx.fillRect(0, 0, 210, 280);
+
+        if (rec.colorDataUrl) {
+          await new Promise((res) => {
+            const img = new Image();
+            img.onload = () => {
+              tCtx.drawImage(img, 0, 0, 210, 280);
+              res();
+            };
+            img.onerror = res;
+            img.src = rec.colorDataUrl;
+          });
+        }
+        tCtx.drawImage(rec.lineArtCanvas, 0, 0, 210, 280);
+        thumb.className = 'w-full h-full object-contain';
+        box.appendChild(thumb);
+
+        if (rec.colorDataUrl) {
+          const badge = document.createElement('span');
+          badge.className = 'absolute top-2 right-2 px-2 py-0.5 rounded-full bg-emerald-500 text-white text-[10px] font-extrabold shadow-2xs';
+          badge.textContent = 'Colored';
+          box.appendChild(badge);
+        }
+
+        const label = document.createElement('span');
+        label.className = `text-xs font-extrabold px-1 ${isCurrent ? 'text-orange-600' : 'text-stone-700'}`;
+        label.textContent = `Page ${i}`;
+
+        card.appendChild(box);
+        card.appendChild(label);
+        card.addEventListener('click', () => {
+          drawerModal.classList.add('hidden');
+          loadPage(i, true);
+        });
+
+        grid.appendChild(card);
+      }
+    }
+
+    document.getElementById('btnOpenDrawer').addEventListener('click', openThumbnailDrawer);
+    document.getElementById('btnCloseDrawer').addEventListener('click', () => drawerModal.classList.add('hidden'));
+    drawerModal.addEventListener('click', (e) => {
+      if (e.target === drawerModal) drawerModal.classList.add('hidden');
+    });
+
+    document.getElementById('btnPrevPage').addEventListener('click', () => loadPage(state.currentPage - 1, true));
+    document.getElementById('btnNextPage').addEventListener('click', () => loadPage(state.currentPage + 1, true));
+
+    document.getElementById('btnZoomIn').addEventListener('click', () => {
+      const r = viewport.getBoundingClientRect();
+      zoomAroundPoint(1.25, r.left + r.width / 2, r.top + r.height / 2);
+    });
+    document.getElementById('btnZoomOut').addEventListener('click', () => {
+      const r = viewport.getBoundingClientRect();
+      zoomAroundPoint(0.8, r.left + r.width / 2, r.top + r.height / 2);
+    });
+    document.getElementById('btnZoomFit').addEventListener('click', fitPageToViewport);
+
+    function selectTool(toolName) {
+      state.tool = toolName;
+      document.querySelectorAll('.tool-btn').forEach(btn => {
+        const active = btn.dataset.tool === toolName;
+        btn.classList.toggle('active', active);
+        btn.classList.toggle('bg-orange-500', active);
+        btn.classList.toggle('text-white', active);
+        btn.classList.toggle('shadow-2xs', active);
+        btn.classList.toggle('bg-stone-100', !active);
+        btn.classList.toggle('text-stone-700', !active);
+      });
+    }
+
+    document.querySelectorAll('.tool-btn').forEach(btn => {
+      btn.addEventListener('click', () => selectTool(btn.dataset.tool));
+    });
+
+    document.querySelectorAll('.size-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.size = parseInt(btn.dataset.size, 10);
+        document.querySelectorAll('.size-btn').forEach(b => {
+          const active = b === btn;
+          b.classList.toggle('active', active);
+          b.classList.toggle('bg-white', active);
+          b.classList.toggle('text-orange-600', active);
+          b.classList.toggle('shadow-2xs', active);
+          b.classList.toggle('text-stone-700', !active);
+        });
+      });
+    });
+
+    function selectColor(hex) {
+      state.color = hex.toLowerCase();
+      document.getElementById('customColorInput').value = state.color;
+      document.querySelectorAll('.swatch-btn').forEach(btn => {
+        const active = btn.dataset.color === state.color;
+        btn.classList.toggle('ring-3', active);
+        btn.classList.toggle('ring-stone-900', active);
+        btn.classList.toggle('scale-110', active);
+      });
+      if (['eraser', 'pan'].includes(state.tool)) {
+        selectTool('crayon');
+      }
+    }
+
+    function buildColorSwatches() {
+      const rail = document.getElementById('rightColorRail');
+      PALETTE_COLORS.forEach(hex => {
+        const btn = document.createElement('button');
+        btn.dataset.color = hex.toLowerCase();
+        btn.className = 'swatch-btn w-10 h-10 rounded-full shrink-0 border-2 border-stone-200 shadow-2xs transition active:scale-90';
+        btn.style.backgroundColor = hex;
+        btn.title = hex.toUpperCase();
+        btn.addEventListener('click', () => selectColor(hex));
+        rail.appendChild(btn);
+      });
+    }
+
+    document.getElementById('customColorInput').addEventListener('input', (e) => {
+      selectColor(e.target.value);
+    });
+
+    // Clear Page Modal
+    const clearModal = document.getElementById('clearModal');
+    document.getElementById('btnClearPage').addEventListener('click', () => clearModal.classList.remove('hidden'));
+    document.getElementById('btnCancelClear').addEventListener('click', () => clearModal.classList.add('hidden'));
+    document.getElementById('btnConfirmClear').addEventListener('click', () => {
+      pushUndoSnapshot();
+      colorCtx.clearRect(0, 0, state.pageWidth, state.pageHeight);
+      saveCurrentColorLayer();
+      clearModal.classList.add('hidden');
+      showToast('Page cleared!');
+    });
+
+    // Helpers
+    function showLoading(title, sub) {
+      document.getElementById('loadingTitle').textContent = title;
+      document.getElementById('loadingSub').textContent = sub;
+      document.getElementById('loadingOverlay').classList.remove('hidden');
+    }
+
+    function hideLoading() {
+      document.getElementById('loadingOverlay').classList.add('hidden');
+    }
+
+    let toastTimeout = null;
+    function showToast(msg) {
+      const el = document.getElementById('toastBanner');
+      el.textContent = msg;
+      el.classList.remove('opacity-0');
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => el.classList.add('opacity-0'), 2400);
+    }
+
+    // Re-fit canvas cleanly on orientation change or resize
+    window.addEventListener('resize', () => {
+      requestAnimationFrame(() => fitPageToViewport());
+    });
+
+    // =========================================================================
+    // 12. STARTUP INITIALIZATION
+    // =========================================================================
+    window.addEventListener('DOMContentLoaded', () => {
+      buildColorSwatches();
+      selectColor('#ff595e');
+      selectTool('crayon');
+      loadPage(1, true);
+    });
+  </script>
+</body>
+</html>
