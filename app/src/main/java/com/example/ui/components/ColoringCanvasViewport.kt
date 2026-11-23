@@ -367,9 +367,9 @@ fun ColoringCanvasViewport(
 
             // 3. Hover / Stylus Brush Ring Preview
             val hover = hoverPos
-            val showRing = hover != null &&
+            val showRing =
                 uiState.activeTool !in listOf(BrushTool.FILL, BrushTool.EYEDROPPER, BrushTool.PAN)
-            if (showRing && hover != null) {
+            if (hover != null && showRing) {
                 val radiusPx = max(3f, (uiState.activeBrushSize.sizePx * zoom) / 2f)
                 drawCircle(
                     color = Color.White.copy(alpha = 0.9f),
